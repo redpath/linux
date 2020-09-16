@@ -276,16 +276,6 @@ void i2c_acpi_register_devices(struct i2c_adapter *adap)
 		dev_warn(&adap->dev, "failed to enumerate I2C slaves\n");
 }
 
-const struct acpi_device_id *
-i2c_acpi_match_device(const struct acpi_device_id *matches,
-		      struct i2c_client *client)
-{
-	if (!(client && matches))
-		return NULL;
-
-	return acpi_match_device(matches, &client->dev);
-}
-
 static const struct acpi_device_id i2c_acpi_force_400khz_device_ids[] = {
 	/*
 	 * These Silead touchscreen controllers only work at 400KHz, for
@@ -318,7 +308,7 @@ static acpi_status i2c_acpi_lookup_speed(acpi_handle handle, u32 level,
 		lookup->min_speed = lookup->speed;
 
 	if (acpi_match_device_ids(adev, i2c_acpi_force_400khz_device_ids) == 0)
-		lookup->force_speed = 400000;
+		lookup->force_speed = I2C_MAX_FAST_MODE_FREQ;
 
 	return AE_OK;
 }
@@ -394,9 +384,17 @@ EXPORT_SYMBOL_GPL(i2c_acpi_find_adapter_by_handle);
 static struct i2c_client *i2c_acpi_find_client_by_adev(struct acpi_device *adev)
 {
 	struct device *dev;
+	struct i2c_client *client;
 
 	dev = bus_find_device_by_acpi_dev(&i2c_bus_type, adev);
-	return dev ? i2c_verify_client(dev) : NULL;
+	if (!dev)
+		return NULL;
+
+	client = i2c_verify_client(dev);
+	if (!client)
+		put_device(dev);
+
+	return client;
 }
 
 static int i2c_acpi_notify(struct notifier_block *nb, unsigned long value,
@@ -460,15 +458,11 @@ struct notifier_block i2c_acpi_notifier = {
 struct i2c_client *i2c_acpi_new_device(struct device *dev, int index,
 				       struct i2c_board_info *info)
 {
+	struct acpi_device *adev = ACPI_COMPANION(dev);
 	struct i2c_acpi_lookup lookup;
 	struct i2c_adapter *adapter;
-	struct acpi_device *adev;
 	LIST_HEAD(resource_list);
 	int ret;
-
-	adev = ACPI_COMPANION(dev);
-	if (!adev)
-		return ERR_PTR(-EINVAL);
 
 	memset(&lookup, 0, sizeof(lookup));
 	lookup.info = info;
